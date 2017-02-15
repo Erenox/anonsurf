@@ -2,8 +2,8 @@
 
 ### BEGIN INIT INFO
 # Provides:          anonsurf
-# Required-Start:
-# Required-Stop:
+# RequiR-Start:
+# RequiR-Stop:
 # Should-Start:
 # Default-Start:
 # Default-Stop:
@@ -16,7 +16,7 @@
 # Francesco 'mibofra'/'Eli Aran'/'SimpleSmibs' Bonanno <mibofra@ircforce.tk> <mibofra@frozenbox.org>
 #
 #
-# anonsurf is free software: you can redistribute it and/or
+# anonsurf is free software: you can Ristribute it and/or
 # modify it under the terms of the GNU General Public License as
 # published by the Free Software Foundation, either version 3 of the
 # License, or (at your option) any later version.
@@ -30,11 +30,11 @@
 # You should have received a copy of the GNU General Public License
 # along with Parrot Security OS. If not, see <http://www.gnu.org/licenses/>.
 
-
-export BLUE='\033[1;94m'
-export GREEN='\033[1;92m'
-export RED='\033[1;91m'
-export RESETCOLOR='\033[1;00m'
+# Colorize the environment
+export B=$'\033[1;94m'
+export G=$'\033[1;92m'
+export R=$'\033[1;91m'
+export RST=$'\033[1;00m'
 
 # Destinations you don't want routed through Tor
 TOR_EXCLUDE="192.168.0.0/16 172.16.0.0/12 10.0.0.0/8"
@@ -46,225 +46,476 @@ TOR_UID="debian-tor"
 # Tor's TransPort
 TOR_PORT="9040"
 
+# Some dangerous applications
+DANGEROUS_APPLICATIONS="chrome dropbox iceweasel skype icedove thunderbird firefox firefox-esr chromium xchat hexchat transmission steam"
 
-function notify {
+# Some dangerous services
+DANGEROUS_SERVICES="dnsmasq nscd resolvconf"
+
+# Cache elements to clear
+DANGEROUS_CACHE_ELEMENTS="adobe_reader.cache chromium.cache chromium.current_session chromium.history elinks.history emesene.cache epiphany.cache firefox.url_history"
+
+# FrozenBox DNS
+DNS="nameserver 127.0.0.1\nnameserver 92.222.97.144\nnameserver 92.222.97.145"
+
+# Iptables save location
+IPTABLES="/etc/network/iptables.rules" 
+
+
+###
+# Display
+###
+
+# Reset and display the banner
+function display_banner 
+{
+reset
+banner="
+$B Parrot AnonSurf Module (v 2.3) - Developed by : $RST
+	-Lorenzo   \"Palinuro\"  Faletra <palinuro@parrotsec.org>
+	-Lisetta   \"Sheireen\"  Ferrero <sheireen@parrotsec.org>
+	-Francesco \"Mibofra\"   Bonanno <mibofra@parrotsec.org>
+	 and a huge amount of Caffeine + some GNU/GPL v3 stuff"
+echo -e "$banner\n"
+}
+
+# Diplay the commands
+function display_commands
+{
+commands="
+	$R┌──[$G$USER$YELLOW@$B`hostname`$R]─[$G$PWD$R] 
+	$R└──╼ \$$G"" anonsurf $R{$G""start$R|$G""stop$R|$G""restart$R|$G""change$R""$R|$G""status$R""}
+	$R start$B	  -$G Start system-wide TOR tunnel
+	$R stop$B	  -$G Stop anonsurf and return to clearnet
+	$R restart$B  -$G Combines \"stop\" and \"start\" options
+	$R change$B	  -$G Restart TOR to change identity
+	$R status$B	  -$G Check if AnonSurf is working properly
+	$R myip$B	  -$G Check your ip and verify your tor connection
+
+	----[ I2P related features ]----
+	$R starti2p$B -$G Start i2p services
+	$R stopi2p$B  -$G Stop  i2p services$RST"
+echo -e -n "$commands\n\n"
+}
+
+
+###
+# Service Management
+###
+
+# Stop the service passed in argument
+function services_stop
+{
+	echo -e -n "$B[$G*$B] Stopping service $1\n"
+	eval "service $1 stop &> /dev/null"
+	if [ $? -eq 0 ]; then
+		echo -e " $G●$RST $1 stopped\n"
+	else
+		echo -e "$G[$R!$G]$R $1 is already stopped\n"
+	fi	
+}
+
+# Restart the service passed in argument
+function services_restart
+{
+	echo -e -n "$B[$G*$B] Restarting service $1\n"
+	eval "service $1 restart &> /dev/null"
+	echo -e " $G●$RST $1 restarted\n"
+}
+
+# Display the status passed in argument
+function services_check
+{
+	echo -e "\n$B* $1$RST"
+	if [  `service $1 status 2>/dev/null | wc -l` != 0 ]; then
+		(service $1 status | sed -n 2,3p)
+	else
+		echo -e "   $G[$R!$G]$R service not found !"
+	fi
+
+}
+
+
+###
+# Functions : require_root - notify - processing - clean_dhcp - set_iptables - init
+###
+
+# Make sure only root can run this script
+function require_root
+{
+	if [ $(id -u) -ne 0 ]; then
+		echo -e -e "$G[$R!$G]$R Anonsurf must be run as root !$RST\n"
+		exit 1
+	fi
+}
+
+# Emit an alert to user
+function notify 
+{	
+	# notify-send only working with non-root user
 	if [ -e /usr/bin/notify-send ]; then
-		/usr/bin/notify-send "AnonSurf" "$1"
+
+		if [ $(id -u) -ne 0 ]; then # ok, display the notification
+			/usr/bin/notify-send "Anonsurf" "$1"
+
+		else # grep and send the notification to main user
+			MAINUSER=$(cat /etc/passwd|grep 1000|sed "s/:.*$//g")
+			su $MAINUSER -c $"notify-send \"AnonSurf\" \"$1\""
+		fi
+
 	fi
 }
 export notify
 
-function clean_dhcp {
+
+# Processing and display command result
+function processing
+{ 
+	echo -e -n "$B[$G*$B] $1 $RST\n"
+	eval "$2 2> /dev/null"
+	echo -e "$G ●$RST $3\n"
+}
+
+# Release DHCP address
+function clean_dhcp 
+{
 	dhclient -r
 	rm -f /var/lib/dhcp/dhclient*
-	echo -e -n "$BLUE[$GREEN*$BLUE] DHCP address released"
-	notify "DHCP address released"
+	echo -e -n "$B[$G*$B] DHCP address released"
 }
 
 
-function init {
-	echo -e -n "$BLUE[$GREEN*$BLUE] killing dangerous applications\n"
-	killall -q chrome dropbox iceweasel skype icedove thunderbird firefox firefox-esr chromium xchat hexchat transmission steam
-	echo -e -n "$BLUE[$GREEN*$BLUE] Dangerous applications killed"
-	notify "Dangerous applications killed"
-	
-	echo -e -n "$BLUE[$GREEN*$BLUE] cleaning some dangerous cache elements\n"
-	bleachbit -c adobe_reader.cache chromium.cache chromium.current_session chromium.history elinks.history emesene.cache epiphany.cache firefox.url_history flash.cache flash.cookies google_chrome.cache google_chrome.history  links2.history opera.cache opera.search_history opera.url_history &> /dev/null
-	echo -e -n "$BLUE[$GREEN*$BLUE] Cache cleaned\n"
-	notify "Cache cleaned"
-}
+# Set the iptables rules
+function set_iptables
+{
+	echo -e -n "$B[$G*$B] Redirect all traffic throught Tor \n"
 
-
-
-
-function starti2p {
-	echo -e -n " $GREEN*$BLUE starting I2P services"
-	service tor stop
-	cp /etc/resolv.conf /etc/resolv.conf.bak
-	touch /etc/resolv.conf
-	echo -e 'nameserver 127.0.0.1\nnameserver 92.222.97.144\nnameserver 92.222.97.145' > /etc/resolv.conf
-	echo -e -n "$BLUE[$GREEN*$BLUE] Modified resolv.conf to use tor and ParrotDNS\n"
-	sudo -u i2psvc i2prouter start
-	iceweasel http://127.0.0.1:7657/home &
-	echo -e -n "$BLUE[$GREEN*$BLUE] I2P daemon started"
-	notify "I2P daemon started"
-}
-
-function stopi2p {
-	echo -e -n "$BLUE[$GREEN*$BLUE] Stopping I2P services\n"
-	sudo -u i2psvc i2prouter stop
-	if [ -e /etc/resolv.conf.bak ]; then
-		rm /etc/resolv.conf
-		cp /etc/resolv.conf.bak /etc/resolv.conf
-	fi
-	echo -e -n "$BLUE[$GREEN*$BLUE] I2P daemon stopped\n"
-	notify "I2P daemon stopped"
-}
-
-
-
-function ip {
-
-	echo -e "\nMy ip is:\n"
-	sleep 1
-	wget -qO- http://ip.frozenbox.org/
-	echo -e "\n"
-	echo -e "if the two letters nation code is T1\n then you are succesfully connected to tor"
-	echo -e "\n\n----------------------------------------------------------------------"
-}
-
-
-
-function start {
-	# Make sure only root can run this script
-	if [ $(id -u) -ne 0 ]; then
-		echo -e -e "\n$GREEN[$RED!$GREEN] $RED R U DRUNK?? This script must be run as root$RESETCOLOR\n" >&2
-		exit 1
-	fi
-	
-	echo -e "\n$GREEN[$BLUE i$GREEN ]$BLUE Starting anonymous mode:$RESETCOLOR\n"
-	
-	if [ ! -e /tmp/tor.pid ]; then
-		echo -e " $RED*$BLUE Tor is not running! $GREEN starting it $BLUE for you\n" >&2
-		echo -e -n " $GREEN*$BLUE Stopping service nscd"
-		service nscd stop 2>/dev/null || echo " (already stopped)"
-		echo -e -n " $GREEN*$BLUE Stopping service resolvconf"
-		service resolvconf stop 2>/dev/null || echo " (already stopped)"
-		echo -e -n " $GREEN*$BLUE Stopping service dnsmasq"
-		service dnsmasq stop 2>/dev/null || echo " (already stopped)"
-		killall dnsmasq nscd resolvconf 2>/dev/null || true
-		sleep 2
-		killall -9 dnsmasq 2>/dev/null || true
-		service resolvconf start 
-		sleep 5
-		systemctl start tor
-		sleep 20
-	fi
-	
-	
-	if ! [ -f /etc/network/iptables.rules ]; then
-		iptables-save > /etc/network/iptables.rules
-		echo -e " $GREEN*$BLUE Saved iptables rules"
-	fi
-	
-	iptables -F
-	iptables -t nat -F
-	
-	cp /etc/resolv.conf /etc/resolv.conf.bak
-	touch /etc/resolv.conf
-	echo -e 'nameserver 127.0.0.1\nnameserver 92.222.97.144\nnameserver 92.222.97.145' > /etc/resolv.conf
-	echo -e " $GREEN*$BLUE Modified resolv.conf to use Tor and FrozenDNS"
-
-	# set iptables nat
+	# Set iptables nat
 	iptables -t nat -A OUTPUT -m owner --uid-owner $TOR_UID -j RETURN
 
-	#set dns redirect
+	# Set dns Redirect
 	iptables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-ports 53
 	iptables -t nat -A OUTPUT -p tcp --dport 53 -j REDIRECT --to-ports 53
-	iptables -t nat -A OUTPUT -p udp -m owner --uid-owner $TOR_UID -m udp --dport 53 -j REDIRECT --to-ports 53
+	iptables -t nat -A OUTPUT -p udp -m owner --uid-owner $TOR_UID -m udp --dport 53 -j 	REDIRECT --to-ports 53
 	
-	#resolve .onion domains mapping 10.192.0.0/10 address space
+	# Resolve .onion domains mapping 10.192.0.0/10 address space
 	iptables -t nat -A OUTPUT -p tcp -d 10.192.0.0/10 -j REDIRECT --to-ports $TOR_PORT
 	iptables -t nat -A OUTPUT -p udp -d 10.192.0.0/10 -j REDIRECT --to-ports $TOR_PORT
 	
-	#exclude local addresses
+	# Exclude local addresses
 	for NET in $TOR_EXCLUDE 127.0.0.0/9 127.128.0.0/10; do
 		iptables -t nat -A OUTPUT -d $NET -j RETURN
 		iptables -A OUTPUT -d "$NET" -j ACCEPT
 	done
 	
-	#redirect all other output through TOR	
+	# Redirect all other output through TOR	
 	iptables -t nat -A OUTPUT -p tcp --syn -j REDIRECT --to-ports $TOR_PORT
 	iptables -t nat -A OUTPUT -p udp -j REDIRECT --to-ports $TOR_PORT
 	iptables -t nat -A OUTPUT -p icmp -j REDIRECT --to-ports $TOR_PORT
 	
-	#accept already established connections
+	# Accept already established connections
 	iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 	
-	#allow only tor output
+	# Allow only tor output
 	iptables -A OUTPUT -m owner --uid-owner $TOR_UID -j ACCEPT
 	iptables -A OUTPUT -j REJECT
 
-	echo -e "$GREEN *$BLUE All traffic was redirected throught Tor\n"
-	echo -e "$GREEN[$BLUE i$GREEN ]$BLUE You are under AnonSurf tunnel$RESETCOLOR\n"
-	notify "Global Anonymous Proxy Activated"
-	sleep 10
+	echo -e "$G ●$RST All traffic was redirected throught Tor\n"
+}
+
+# Init before start or stop
+function init 
+{
+	# Kill dangerous applications
+	cmd="killall -q $DANGEROUS_APPLICATIONS"
+	processing "Killing dangerous applications" "$cmd" "Dangerous applications killed"
+
+	# Kill dangerous cache elements
+	cmd="bleachbit -c $DANGEROUS_CACHE_ELEMENTS 1> /dev/null"
+	processing "Cleaning some dangerous cache elements" "$cmd" "Cache cleaned"
+
+}
+
+
+###
+# I2P : starti2p - stopi2p
+###
+
+# start I2P service
+function starti2p 
+{
+	echo -e "$G[$B!$G]$B STARTING I2P SERVICES :$RST\n"
+
+	# check if tor is not running before continue
+	if [ `ps -e | grep tor | wc -l` = 1 ]; then
+		echo -e "$G[$R!$G]$R Tor must be stopped !"
+	else
+
+		# Start 2IP deamon
+		cmd="sudo -u i2psvc i2prouter start > /dev/null"
+		processing "Start I2P daemon" "$cmd" "I2P daemon started"
+		sleep 10
+
+		echo "I2P daemon started - localhost:7657"		
+		notify "I2P daemon started - localhost:7657"
+
+	fi
+}
+
+# stop I2P service
+function stopi2p 
+{
+	echo -e "$G[$B!$G]$B STOPPING I2P SERVICES :$RST\n"
+
+	# stopping I2P daemon
+	cmd="sudo -u i2psvc i2prouter stop > /dev/null"		
+	processing "Stopping I2P daemon" "$cmd" "I2P daemon stopped"
+
+	notify "I2P daemon stopped"
 }
 
 
 
+###
+# Global Proxy : start - stop - check_ip - change - status
+###
 
 
-function stop {
-	# Make sure only root can run our script
-	if [ $(id -u) -ne 0 ]; then
-		echo -e "\n$GREEN[$RED!$GREEN] $RED R U DRUNK?? This script must be run as root$RESETCOLOR\n" >&2
-		exit 1
-	fi
-	echo -e "\n$GREEN[$BLUE i$GREEN ]$BLUE Stopping anonymous mode:$RESETCOLOR\n"
+# Start Tor Global Proxy
+function start 
+{	
+	echo -e "$G[$B!$G]$B STARTING ANONIMOUS MODE :$RST\n"
 
-	iptables -F
-	iptables -t nat -F
-	echo -e " $GREEN*$BLUE Deleted all iptables rules"
+	# Check if Tor is already started
+	if [ `ps -e | grep tor | wc -l` = 1 ]; then
+
+		echo -e "$B[$G*$B] Tor seems already running\n"
+		notify "Tor seems already running"
+
+		# Check if connected trough Tor (or reload Tor service)
+		check_ip "safe"
+	else
+
+		echo -e "$B[$R*$B] Tor is not running:$G starting it$B for you\n"
+		
+		# Stop the following services
+		services_stop "nscd"
+		services_stop "resolvconf"
+		services_stop "dnsmasq"
+		
+		# Kill the dangerous services
+		cmd="killall $DANGEROUS_SERVICES"
+		processing "Killing dangerous services" "$cmd" "Dangerous applications killed"
+
+
+		# Starting resolvconf and tor services
+		cmd="service resolvconf start ; systemctl start tor"
+		processing "Starting tor service" "$cmd" "Tor service started"
+		sleep 8 # Wait for ensure tor running in right way
+
+		if ! [ -f $IPTABLES ]; then
+			# Saving possible user iptables rules
+			cmd="iptables-save > $IPTABLES"
+			processing "Saving iptables rules" "$cmd" "Saved iptables rules"
+		fi
 	
-	if [ -f /etc/network/iptables.rules ]; then
-		iptables-restore < /etc/network/iptables.rules
-		rm /etc/network/iptables.rules
-		echo -e " $GREEN*$BLUE Iptables rules restored"
+		# Flush current iptables rules
+		cmd="iptables -F ; iptables -t nat -F"
+		processing "Delete all Tor iptables rules" "$cmd" "All Tor iptables rules deleted"
+		sleep 2 # Wait for ensure iptables rules is removed.
+
+		# Use Frozenbox DNS
+		cmd="mv /etc/resolv.conf /etc/resolv.conf.bak ; echo -e '$DNS' > /etc/resolv.conf"
+		processing "Use Tor with FrozenDNS" "$cmd" "Modified resolv.conf"
+
+		# Set the right iptables
+		set_iptables
+		sleep 2
+
+		# Check if connected trough Tor (or reload Tor service)
+		check_ip "safe" 
+
+		notify "Global Anonymous Proxy Activated"
+
 	fi
-	echo -e -n " $GREEN*$BLUE Restore DNS service"
-	if [ -e /etc/resolv.conf.bak ]; then
-		rm /etc/resolv.conf
-		cp /etc/resolv.conf.bak /etc/resolv.conf
+}
+
+# Stop Tor Global Proxy
+function stop 
+{
+	echo -e "$G[$B*$G]$B STOPPING ANONYMOUS MODE :$RST\n"
+
+	# Check if Tor is already stopped
+	if [ `ps -e | grep tor | wc -l` = 0 ]; then
+
+		echo -e "$B[$G*$B] Tor is already stopped\n"
+		notify " Tor is already stopped"
+		check_ip
+
+	else
+
+		echo -e "$B[$R*$B] Tor is running:$G stopping it$B for you\n"
+	
+
+		# Flush current iptables rules
+		cmd="iptables -F ; iptables -t nat -F"
+		processing "Delete all Tor iptables rules" "$cmd" "All Tor iptables rules deleted"
+		sleep 2 # Wait for ensure iptables rules is removed.
+	
+		if [ -f $IPTABLES ]; then
+			# Restaure all iptables rules	
+			cmd="iptables-restore < $IPTABLES ; rm $IPTABLES"
+			processing "Restore all iptables rules" "$cmd" "All iptables rules restored"
+		fi
+
+		if [ -e /etc/resolv.conf.bak ]; then
+			# Restore all DNS rules	
+			cmd="mv /etc/resolv.conf.bak /etc/resolv.conf"
+			processing "Restore DNS service" "$cmd" "DNS service restored"
+		fi
+
+		# Stop TOR service	
+		cmd="service tor stop"
+		processing "Stopping Tor service" "$cmd" "Tor service stopped"
+		sleep 4
+
+		# Restart the following services
+		services_restart "resolvconf"
+		services_restart "dnsmasq"
+		services_restart "nscd"
+
+		# Check if disconnected trough TOR
+		check_ip
+
+		notify "Global Anonymous Proxy Desactivated"
 	fi
-	service tor stop
+}
+
+# Check Tor connectivity using ip.frozenbox.org
+function check_ip 
+{
+	# get the user ip and country code using ip.frozenbox.org
+   	data=$( wget -qO- --tries=4 http://ip.frozenbox.org/ )
+
+	# Check the result
+	if [[ $data == *"T1" || $data == *"XX" ]]; then # T1 or XX, client is connected throught Tor
+		echo -e -n "$B[$G*$B] Your public ip is "
+		echo $data
+		echo -e " $G●$RST Connected throught Tor\n"
+		notify "ip: $data"
+
+	else # another country code or empty result
+
+		if [ -z $1 ]; then #common mode or anonsurf stop
+			echo -e -n "$B[$G*$B] My ip is "
+			echo $data
+			echo -e " $R●$RST You seems not be connected throught Tor\n"
+			notify "ip: $data"
+
+		else # safe mode, emit an alert and reload
+			echo -e "$R$G[$R!$G]$R Connection failed, retry ...\n"
+			change "silent" # fast reload
+		fi
+
+	fi
+}
+
+
+# Change Tor nodes
+function change 
+{
+	if [ -z "$1" ]; then # common mode or anonsurf change
+
+		# check if Tor is started before change node
+		if ! pgrep -x "tor" > /dev/null; then # not started
+			echo -e "$G[$R!$G]$R Tor is not started\n"
+			notify "Tor is not started"
+
+		else # started
+			notify "Change identity"
+			service tor reload
+			sleep 8
+			echo -e "$B[$G*$B] Changing Tor node"
+			echo -e " $G●$RST Tor daemon reloaded and forced to change nodes\n"
+			
+			# Check if connected trough Tor (or reload Tor service)
+			check_ip "safe"
+		fi
+
+	else # silent mode, fast service restart
+			service tor reload
+			sleep 4
+
+			# Check if connected trough Tor (or reload Tor service)
+			check_ip "safe"
+	fi
+}
+
+# Check the current Anonsurf status
+function status 
+{
+	# display Tor log
+	echo -e "$B[$G*$B] Display Tor logs$RST"
 	sleep 2
-	killall tor
-	sleep 6
-	echo -e -n " $GREEN*$BLUE Restarting services\n"
-	service resolvconf start || service resolvconf restart || true
-	service dnsmasq start || true
-	service nscd start || true
-	echo -e " $GREEN*$BLUE It is safe to not worry for dnsmasq and nscd start errors if they are not installed or started already."
-	sleep 1
+	journalctl -u tor@default --reverse # tor logs, most recent at top
+
+	# display iptables
+	echo -e "\n$B[$G*$B] Display iptables$RST"
+	sleep 2
+	iptables -S  # or iptables -L ?
 	
-	echo -e " $GREEN*$BLUE Anonymous mode stopped\n"
-	notify "Global Anonymous Proxy Stopped"
-	sleep 4
+	# display nameservers
+	echo -e "\n$B[$G*$B] Display nameservers$RST"
+	sleep 2
+
+	if [ ! -s /etc/resolv.conf ]; then # /etc/resolv.conf is empty
+		echo -e "   $G[$R!$G]$R /etc/resolv.conf is empty !"
+	else # display /etc/resolv.conf
+		cat /etc/resolv.conf
+	fi
+
+	# display the service status
+	echo -e "\n$B[$G*$B] Display services state$RST"
+	sleep 2
+
+	# check all service status
+	services_check "tor"
+	services_check "dnsmasq"
+	services_check "nscd"
+	services_check "resolvconf"
+
 }
 
-function change {
-	service tor stop
-	sleep 4
-	service tor start
-	sleep 10
-	echo -e " $GREEN*$BLUE Tor daemon reloaded and forced to change nodes\n"
-	notify "Identity changed"
-	sleep 1
-}
 
-function status {
-	service tor@default status
-	cat /tmp/anonsurf.log || cat /var/log/tor/log
-}
+###
+# Entry point 
+###
 
+# Display the banner in all case
+display_banner
+
+# Get the user choice
 case "$1" in
 	start)
+		require_root
 		init
 		start
 	;;
 	stop)
+		require_root
 		init
 		stop
 	;;
 	change)
+		require_root
 		change
 	;;
 	status)
+		require_root
 		status
 	;;
 	myip)
-		ip
+		check_ip
 	;;
 	starti2p)
 		starti2p
@@ -273,38 +524,20 @@ case "$1" in
 		stopi2p
 	;;
 	restart)
-		$0 stop
-		sleep 1
-		$0 start
+		require_root
+		init
+		stop
+		sleep 2
+		init
+		start
 	;;
-   *)
-echo -e "
-Parrot AnonSurf Module (v 2.3)
-	Developed by Lorenzo \"Palinuro\" Faletra <palinuro@parrotsec.org>
-		     Lisetta \"Sheireen\" Ferrero <sheireen@parrotsec.org>
-		     Francesco \"Mibofra\" Bonanno <mibofra@parrotsec.org>
-		and a huge amount of Caffeine + some GNU/GPL v3 stuff
-	Usage:
-	$RED┌──[$GREEN$USER$YELLOW@$BLUE`hostname`$RED]─[$GREEN$PWD$RED]
-	$RED└──╼ \$$GREEN"" anonsurf $RED{$GREEN""start$RED|$GREEN""stop$RED|$GREEN""restart$RED|$GREEN""change$RED""$RED|$GREEN""status$RED""}
-	
-	$RED start$BLUE -$GREEN Start system-wide TOR tunnel	
-	$RED stop$BLUE -$GREEN Stop anonsurf and return to clearnet
-	$RED restart$BLUE -$GREEN Combines \"stop\" and \"start\" options
-	$RED change$BLUE -$GREEN Restart TOR to change identity
-	$RED status$BLUE -$GREEN Check if AnonSurf is working properly
-	$RED myip$BLUE -$GREEN Check your ip and verify your tor connection
-	
-	----[ I2P related features ]----
-	$RED starti2p$BLUE -$GREEN Start i2p services
-	$RED stopi2p$BLUE -$GREEN Stop i2p services
-$RESETCOLOR
-Dance like no one's watching. Encrypt like everyone is.
-" >&2
-
-exit 1
-;;
+    *)
+		display_commands
+		exit 1
+	;;
 esac
 
-echo -e $RESETCOLOR
+# At the end 
+sleep 4
+echo -e $RST
 exit 0
