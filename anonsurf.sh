@@ -399,15 +399,20 @@ function check_ip
 
 	# Check the result
 	if [[ $data == *"T1" || $data == *"XX" ]]; then # T1 or XX, client is connected throught Tor
-		echo -e -n "$B[$G*$B] Your public ip is "
+		echo -e -n "$B[$G*$B] Your public ip is: "
 		echo $data
 		echo -e " $G●$RST Connected throught Tor\n"
 		notify "ip: $data"
 
+	elif [ -z "$data" ]; then # ip.frozenbox.org does not respond 
+		echo -e "$R$G[$R!$G]$R Your public ip is: unknown $RST"
+		echo -e " $R●$RST Check it manually:\n - ip.frozenbox.org\n - check.torproject.org\n"
+		notify "ip: unknown"
+
 	else # another country code or empty result
 
 		if [ -z $1 ]; then #common mode or anonsurf stop
-			echo -e -n "$B[$G*$B] My ip is "
+			echo -e -n "$B[$G*$B] Your public ip is: "
 			echo $data
 			echo -e " $R●$RST You seems not be connected throught Tor\n"
 			notify "ip: $data"
@@ -462,7 +467,9 @@ function status
 	# display iptables
 	echo -e "\n$B[$G*$B] Display iptables$RST"
 	sleep 2
-	iptables -S  # or iptables -L ?
+	iptables -S
+	sleep 1
+	iptables -L 
 	
 	# display nameservers
 	echo -e "\n$B[$G*$B] Display nameservers$RST"
